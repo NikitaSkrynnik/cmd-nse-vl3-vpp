@@ -28,7 +28,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -54,6 +53,7 @@ import (
 	"github.com/networkservicemesh/sdk/pkg/networkservice/connectioncontext/ipcontext/vl3"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/connectioncontext/mtu/vl3mtu"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/core/chain"
+	"github.com/networkservicemesh/sdk/pkg/networkservice/utils/metadata"
 
 	registryclientinfo "github.com/networkservicemesh/sdk/pkg/registry/common/clientinfo"
 	registrysendfd "github.com/networkservicemesh/sdk/pkg/registry/common/sendfd"
@@ -110,7 +110,7 @@ type Config struct {
 	PrefixServerURL       url.URL           `default:"vl3-ipam:5006" desc:"URL to VL3 IPAM server" split_words:"true"`
 	DNSTemplates          []string          `default:"{{ index .Labels \"podName\" }}.{{ .NetworkService }}." desc:"Represents domain naming templates in go-template format. It is using for generating the domain name for each nse/nsc in the vl3 network" split_words:"true"`
 	LogLevel              string            `default:"INFO" desc:"Log level" split_words:"true"`
-	getDNSServerIP        func() net.IP
+	getDNSServerIP        chan net.IP
 	dnsConfigs            dnsconfig.Map
 }
 
@@ -212,13 +212,7 @@ func main() {
 	logrus.SetLevel(level)
 	logrus.SetFormatter(&nested.Formatter{})
 
-	var dnsServerIP = new(atomic.Value)
-	config.getDNSServerIP = func() net.IP {
-		if ip := dnsServerIP.Load(); ip != nil {
-			return ip.(net.IP)
-		}
-		return nil
-	}
+	config.getDNSServerIP = make(chan net.IP, 1)
 
 	// ********************************************************************************
 	// Configure Open Telemetry
@@ -301,6 +295,7 @@ func main() {
 	)
 
 	clientAdditionalFunctionality := []networkservice.NetworkServiceClient{
+		metadata.NewClient(),
 		upstreamrefresh.NewClient(ctx, upstreamrefresh.WithLocalNotifications()),
 		vl3mtu.NewClient(),
 	}
@@ -403,6 +398,8 @@ func main() {
 	}
 	var nseList = registryapi.ReadNetworkServiceEndpointList(nseStream)
 
+	log.FromContext(ctx).Info("SLEEPING")
+	time.Sleep(time.Second * 60)
 	requestCtx, cancelRequest := context.WithTimeout(signalCtx, config.RequestTimeout)
 	defer cancelRequest()
 
@@ -425,9 +422,12 @@ func main() {
 		_, _ = nsmClient.Close(closeCtx, conn)
 	}(conn)
 
-	dnsServerIP.Store(conn.GetContext().GetIpContext().GetSrcIPNets()[0].IP)
+	dnsServerIP := conn.GetContext().GetIpContext().GetSrcIPNets()[0].IP
+	log.FromContext(ctx).Info("PUT DNS SERVER IP TO CHANNEL")
+	config.getDNSServerIP <- dnsServerIP
+	log.FromContext(ctx).Info("DONE PUTTING DNS SERVER IP TO CHANNEL")
 
-	vl3Client := createVl3Client(ctx, config, vppConn, tlsClientConfig, source, loopOptions, vrfOptions, subscribedChannels[clientSubscriptionIdx], clientAdditionalFunctionality...)
+	vl3Client := createVl3Client(ctx, config, dnsServerIP, vppConn, tlsClientConfig, source, loopOptions, vrfOptions, subscribedChannels[clientSubscriptionIdx], clientAdditionalFunctionality...)
 	for _, nse := range nseList {
 		if nse.Name == config.Name {
 			continue
@@ -468,7 +468,7 @@ func main() {
 	<-vppErrCh
 }
 
-func createVl3Client(ctx context.Context, config *Config, vppConn vpphelper.Connection, tlsClientConfig *tls.Config, source x509svid.Source,
+func createVl3Client(ctx context.Context, config *Config, dnsServerIP net.IP, vppConn vpphelper.Connection, tlsClientConfig *tls.Config, source x509svid.Source,
 	loopOpts []loopback.Option, vrfOpts []vrf.Option, prefixCh <-chan *ipam.PrefixResponse, clientAdditionalFunctionality ...networkservice.NetworkServiceClient) networkservice.NetworkServiceClient {
 	dialOptions := append(tracing.WithTracingDial(),
 		grpcfd.WithChainStreamInterceptor(),
@@ -493,7 +493,7 @@ func createVl3Client(ctx context.Context, config *Config, vppConn vpphelper.Conn
 			append(
 				clientAdditionalFunctionality,
 				vl3.NewClient(ctx, prefixCh),
-				vl3dns.NewClient(config.getDNSServerIP(), &config.dnsConfigs),
+				vl3dns.NewClient(dnsServerIP, &config.dnsConfigs),
 				up.NewClient(ctx, vppConn, up.WithLoadSwIfIndex(loopback.Load)),
 				ipaddress.NewClient(vppConn, ipaddress.WithLoadSwIfIndex(loopback.Load)),
 				loopback.NewClient(vppConn, loopOpts...),
