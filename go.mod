@@ -8,7 +8,7 @@ require (
 	github.com/edwarnicke/grpcfd v1.1.2
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/networkservicemesh/api v1.12.1-rc.1.0.20240301085602-d5e1eb84eeb4
-	github.com/networkservicemesh/sdk v0.5.1-0.20240321094816-f5e9a5c9a229
+	github.com/networkservicemesh/sdk v0.5.1-0.20240325094524-368383fb06d9
 	github.com/networkservicemesh/sdk-vpp v0.0.0-20240321095600-a791c561c5fd
 	github.com/networkservicemesh/vpphelper v0.0.0-20240115135903-e2b961f768b6
 	github.com/pkg/errors v0.9.1
@@ -17,6 +17,8 @@ require (
 	google.golang.org/grpc v1.60.1
 	google.golang.org/protobuf v1.33.0
 )
+
+replace github.com/networkservicemesh/sdk => ./local/sdk
 
 require (
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
