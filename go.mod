@@ -18,6 +18,8 @@ require (
 	google.golang.org/protobuf v1.33.0
 )
 
+replace github.com/networkservicemesh/sdk => ./local/sdk
+
 require (
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect

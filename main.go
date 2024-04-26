@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -44,8 +45,9 @@ import (
 	"github.com/networkservicemesh/sdk/pkg/ipam/strictvl3ipam"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/chains/client"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/clientinfo"
+	"github.com/networkservicemesh/sdk/pkg/networkservice/common/heal"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/mechanisms/recvfd"
-	"github.com/networkservicemesh/sdk/pkg/networkservice/common/null"
+	"github.com/networkservicemesh/sdk/pkg/networkservice/common/nsemonitor"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/onidle"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/retry"
 	"github.com/networkservicemesh/sdk/pkg/networkservice/common/upstreamrefresh"
@@ -78,9 +80,10 @@ import (
 	"github.com/networkservicemesh/api/pkg/api/ipam"
 	"github.com/networkservicemesh/api/pkg/api/networkservice"
 	"github.com/networkservicemesh/api/pkg/api/networkservice/payload"
+	"github.com/networkservicemesh/api/pkg/api/registry"
 	registryapi "github.com/networkservicemesh/api/pkg/api/registry"
 	"github.com/networkservicemesh/sdk-vpp/pkg/networkservice/tag"
-
+	vppheal "github.com/networkservicemesh/sdk-vpp/pkg/tools/heal"
 	kernelsdk "github.com/networkservicemesh/sdk/pkg/networkservice/common/mechanisms/kernel"
 
 	"github.com/networkservicemesh/sdk/pkg/networkservice/chains/endpoint"
@@ -316,6 +319,7 @@ func main() {
 			client.WithClientURL(&config.ConnectTo),
 			client.WithName(config.Name),
 			client.WithAuthorizeClient(authorize.NewClient()),
+			client.WithHealClient(heal.NewClient(ctx)),
 			client.WithAdditionalFunctionality(
 				append(
 					clientAdditionalFunctionality,
@@ -422,7 +426,7 @@ func main() {
 
 	conn, err := nsmClient.Request(requestCtx, &networkservice.NetworkServiceRequest{
 		Connection: &networkservice.Connection{
-			Id:                         config.Name + "-kernel",
+			Id:                         config.Name + "-kernelLLLLLLLLLLLLLLLLLL",
 			NetworkServiceEndpointName: config.Name,
 			NetworkService:             config.ServiceNames[0],
 			Payload:                    payload.IP,
@@ -466,7 +470,7 @@ func main() {
 		requestCtx, cancelRequest = context.WithTimeout(signalCtx, config.RequestTimeout)
 		defer cancelRequest()
 
-		conn, err = vl3Client.Request(requestCtx, request)
+		conn, err := vl3Client.Request(requestCtx, request)
 		if err != nil {
 			log.FromContext(ctx).Errorf("request has failed: %v", err.Error())
 			continue
@@ -534,6 +538,24 @@ func createVl3Client(ctx context.Context, config *Config, vppConn vpphelper.Conn
 		),
 	)
 
+	cc, err := grpc.Dial(config.ConnectTo.String(), dialOptions...)
+	if err != nil {
+		panic(fmt.Sprintf("failed to connect to the registry: %s", err.Error()))
+	}
+	registryClient := registry.NewNetworkServiceEndpointRegistryClient(cc)
+
+	healClient := heal.NewClient(ctx,
+		heal.WithLivenessCheck(vppheal.VPPLivenessCheck(vppConn)),
+		heal.WithLivenessCheckTimeout(time.Second),
+		heal.WithLivenessCheckInterval(time.Second*2),
+		heal.WithReselectFunc(func(request *networkservice.NetworkServiceRequest) {
+			if request.GetConnection() != nil {
+				request.GetConnection().Mechanism = nil
+				request.GetConnection().Context = nil
+				request.GetConnection().State = networkservice.State_RESELECT_REQUESTED
+			}
+		}))
+
 	c := client.NewClient(
 		ctx,
 		client.WithClientURL(&config.ConnectTo),
@@ -541,6 +563,7 @@ func createVl3Client(ctx context.Context, config *Config, vppConn vpphelper.Conn
 		client.WithAdditionalFunctionality(
 			append(
 				clientAdditionalFunctionality,
+				nsemonitor.NewClient(ctx, registryClient),
 				newMultiIPAMClient(ctx, ipams),
 				vl3dns.NewClient(config.dnsServerAddr, &config.dnsConfigs),
 				up.NewClient(ctx, vppConn, up.WithLoadSwIfIndex(loopback.Load)),
@@ -556,7 +579,7 @@ func createVl3Client(ctx context.Context, config *Config, vppConn vpphelper.Conn
 				recvfd.NewClient(),
 			)...,
 		),
-		client.WithHealClient(null.NewClient()),
+		client.WithHealClient(healClient),
 		client.WithDialTimeout(config.DialTimeout),
 		client.WithDialOptions(dialOptions...),
 	)
