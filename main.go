@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"go.fd.io/govpp/api"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/networkservicemesh/sdk-vpp/pkg/networkservice/connectioncontext/ipcontext/ipaddress"
@@ -537,7 +538,7 @@ func extractIPAMList(ctx context.Context, subscriptions []chan *ipam.PrefixRespo
 	return ipams
 }
 
-func createVl3Client(ctx context.Context, config *Config, vppConn vpphelper.Connection, tlsClientConfig *tls.Config, source x509svid.Source,
+func createVl3Client(ctx context.Context, config *Config, vppConn api.Connection, tlsClientConfig *tls.Config, source x509svid.Source,
 	loopOpts []loopback.Option, vrfOpts []vrf.Option, ipams []*vl3.IPAM, clientAdditionalFunctionality ...networkservice.NetworkServiceClient) networkservice.NetworkServiceClient {
 	dialOptions := append(tracing.WithTracingDial(),
 		grpcfd.WithChainStreamInterceptor(),
@@ -600,7 +601,7 @@ func newMultiIPAMClient(ctx context.Context, ipams []*vl3.IPAM) networkservice.N
 	return next.NewNetworkServiceClient(clients...)
 }
 
-func createVl3Endpoint(ctx context.Context, cancel context.CancelFunc, config *Config, vppConn vpphelper.Connection, tlsServerConfig *tls.Config,
+func createVl3Endpoint(ctx context.Context, cancel context.CancelFunc, config *Config, vppConn api.Connection, tlsServerConfig *tls.Config,
 	source x509svid.Source, loopOpts []loopback.Option, vrfOpts []vrf.Option, ipams []*vl3.IPAM) *grpc.Server {
 	vl3Endpoint := endpoint.NewServer(ctx,
 		spiffejwt.TokenGeneratorFunc(source, config.MaxTokenLifetime),
